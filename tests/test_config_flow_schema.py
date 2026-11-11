@@ -48,5 +48,59 @@ class FormsSerialise(unittest.TestCase):
         self.assertFalse(self.flow._check_rule({self.flow.CONF_MAX_EXPORT_KW: 0.0}))
 
 
+@unittest.skipUnless(HAVE_HA, "homeassistant not installed")
+class OptionsFlowHost(unittest.TestCase):
+    """Drive the real options flow with a stub entry."""
+
+    def _flow(self, host="192.0.2.10"):
+        import asyncio
+        from types import SimpleNamespace
+        from unittest import mock
+        from custom_components.sungrow_export_limit import config_flow as cf
+        entry = SimpleNamespace(entry_id="e1", data={"host": host, "price_entity": "sensor.price"}, options={})
+        flow = cf.SungrowOptionsFlow()
+        flow.hass = mock.MagicMock()
+        flow.hass.config_entries.async_get_known_entry.return_value = entry
+        flow.handler = "e1"
+        return cf, flow, entry, asyncio
+
+    def test_form_shows_the_dongle_address_first(self):
+        import probatio
+        cf, flow, entry, asyncio = self._flow()
+        result = asyncio.run(flow.async_step_init())
+        fields = probatio.to_field_list(result["data_schema"], custom_serializer=cv.custom_serializer)
+        self.assertEqual(fields[0]["name"], "host")
+
+    def _submit(self, new_host, probe_errors):
+        from unittest import mock
+        cf, flow, entry, asyncio = self._flow()
+        values = {"host": new_host, "price_entity": "sensor.price", "trigger_price": 0.0, "max_export_kw": 0.0,
+                  "sun_entity": "sun.sun", "min_sun_elevation": 12, "restore_after_minutes": 15,
+                  "min_interval_seconds": 120}
+
+        async def probe(*_a):
+            return probe_errors
+        with mock.patch.object(cf, "_probe", probe):
+            return flow, entry, asyncio.run(flow.async_step_init(values))
+
+    def test_unreachable_new_address_is_rejected(self):
+        flow, entry, result = self._submit("192.0.2.99", {"base": "cannot_connect"})
+        self.assertEqual(result["type"].value, "form")
+        self.assertEqual(result["errors"], {"base": "cannot_connect"})
+        flow.hass.config_entries.async_update_entry.assert_not_called()
+
+    def test_new_address_is_saved_to_the_entry_not_the_options(self):
+        flow, entry, result = self._submit("192.0.2.99", {})
+        self.assertEqual(result["type"].value, "create_entry")
+        self.assertNotIn("host", result["data"])
+        kwargs = flow.hass.config_entries.async_update_entry.call_args.kwargs
+        self.assertEqual(kwargs["data"]["host"], "192.0.2.99")
+
+    def test_unchanged_address_is_not_probed_or_rewritten(self):
+        flow, entry, result = self._submit("192.0.2.10", {"base": "cannot_connect"})
+        self.assertEqual(result["type"].value, "create_entry")
+        flow.hass.config_entries.async_update_entry.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

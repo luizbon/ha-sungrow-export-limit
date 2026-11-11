@@ -47,6 +47,15 @@ def _check_rule(user_input: dict) -> dict:
     return {}
 
 
+async def _probe(hass, host) -> dict:
+    """Read the inverter through the dongle; returns a form error dict (empty when it works)."""
+    try:
+        await hass.async_add_executor_job(Dongle(host).snapshot)
+    except Exception:  # noqa: BLE001
+        return {"base": "cannot_connect"}
+    return {}
+
+
 class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
@@ -55,17 +64,10 @@ class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(entry: ConfigEntry):
         return SungrowOptionsFlow()
 
-    async def _probe(self, host):
-        try:
-            await self.hass.async_add_executor_job(Dongle(host).snapshot)
-        except Exception:  # noqa: BLE001
-            return {"base": "cannot_connect"}
-        return {}
-
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
-            errors = _check_rule(user_input) or await self._probe(user_input[CONF_HOST])
+            errors = _check_rule(user_input) or await _probe(self.hass, user_input[CONF_HOST])
             if not errors:
                 await self.async_set_unique_id(user_input[CONF_HOST])
                 self._abort_if_unique_id_configured()
@@ -79,7 +81,7 @@ class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors = {}
         if user_input is not None:
-            errors = await self._probe(user_input[CONF_HOST])
+            errors = await _probe(self.hass, user_input[CONF_HOST])
             if not errors:
                 return self.async_update_reload_and_abort(entry, data_updates=user_input,
                                                           unique_id=user_input[CONF_HOST])
@@ -91,10 +93,19 @@ class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
 class SungrowOptionsFlow(OptionsFlow):
     async def async_step_init(self, user_input=None):
         errors = {}
-        current = {**self.config_entry.data, **self.config_entry.options}
+        entry = self.config_entry
+        current = {**entry.data, **entry.options}
         if user_input is not None:
             errors = _check_rule(user_input)
+            host = user_input[CONF_HOST]
+            if not errors and host != entry.data[CONF_HOST]:
+                errors = await _probe(self.hass, host)
             if not errors:
-                return self.async_create_entry(data=user_input)
+                if host != entry.data[CONF_HOST]:
+                    self.hass.config_entries.async_update_entry(
+                        entry, data={**entry.data, CONF_HOST: host}, unique_id=host)
+                return self.async_create_entry(data={k: v for k, v in user_input.items() if k != CONF_HOST})
             current = {**current, **user_input}
-        return self.async_show_form(step_id="init", data_schema=_rule_schema(current), errors=errors)
+        schema = vol.Schema({vol.Required(CONF_HOST, default=current[CONF_HOST]): str}
+                            ).extend(_rule_schema(current).schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

@@ -47,6 +47,7 @@
       "init": {
         "title": "Export limit rule",
         "data": {
+          "host": "Dongle IP address",
           "price_entity": "Feed-in price sensor",
           "trigger_price": "Trigger price (limit export while the price is below)",
           "max_export_kw": "Maximum export when triggered",
@@ -57,6 +58,7 @@
           "min_interval_seconds": "Minimum time between limiting changes"
         },
         "data_description": {
+          "host": "Checked by reading the inverter before it is saved.",
           "price_entity": "The sensor holding the price you are paid to export. A negative value means you pay to export.",
           "trigger_price": "In the sensor's own unit. 0 limits export only while the price is negative.",
           "max_export_kw": "How much the inverter may export while the trigger is hit. 0 stops export entirely.",
