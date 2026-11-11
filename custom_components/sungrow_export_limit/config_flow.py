@@ -13,8 +13,10 @@ SUN = selector.EntitySelector(selector.EntitySelectorConfig(domain="sun"))
 
 
 def _num(minimum, maximum, step="any", unit=None):
-    return selector.NumberSelector(selector.NumberSelectorConfig(
-        min=minimum, max=maximum, step=step, unit_of_measurement=unit, mode=selector.NumberSelectorMode.BOX))
+    config = {"min": minimum, "max": maximum, "step": step, "mode": selector.NumberSelectorMode.BOX}
+    if unit:  # HA rejects unit_of_measurement=None
+        config["unit_of_measurement"] = unit
+    return selector.NumberSelector(selector.NumberSelectorConfig(**config))
 
 
 def _rule_schema(current: dict) -> vol.Schema:

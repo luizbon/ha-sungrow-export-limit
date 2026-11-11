@@ -1,6 +1,6 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .coordinator import LimitCoordinator
@@ -13,13 +13,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
+    @callback
+    def _evaluate(*_args) -> None:
+        # Plain lambdas run in a worker thread; a @callback runs in the event loop.
+        entry.async_create_background_task(hass, coordinator.async_evaluate(), "sungrow rule")
+
+    @callback
+    def _restore_on_stop(_event) -> None:
+        hass.async_create_task(coordinator.async_shutdown_restore())  # tracked, so HA waits for it
+
     entry.async_on_unload(async_track_state_change_event(
-        hass, [coordinator.price_entity, coordinator.sun_entity],
-        lambda _e: hass.async_create_task(coordinator.async_evaluate())))
-    entry.async_on_unload(coordinator.async_add_listener(
-        lambda: hass.async_create_task(coordinator.async_evaluate())))
-    entry.async_on_unload(hass.bus.async_listen_once(
-        EVENT_HOMEASSISTANT_STOP, lambda _e: hass.async_create_task(coordinator.async_shutdown_restore())))
+        hass, [coordinator.price_entity, coordinator.sun_entity], _evaluate))
+    entry.async_on_unload(coordinator.async_add_listener(_evaluate))
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _restore_on_stop))
     coordinator._subscribed = (coordinator.price_entity, coordinator.sun_entity)
 
     async def _changed(hass: HomeAssistant, changed: ConfigEntry) -> None:
