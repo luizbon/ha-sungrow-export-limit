@@ -26,26 +26,29 @@ Then go to Settings, Devices & services, Add integration, and search for "Sungro
 
 ## Settings
 
-Every value below is set in the setup form and can be changed later with the Configure button.
+Set these in the setup form and change them later with the Configure button.
 
 | Setting | Default | What it does |
 |---|---|---|
 | Dongle IP address | required | Change it later with Reconfigure |
 | Feed-in price sensor | required | Any sensor. A negative value means you pay to export |
-| Curtail when the price is below | 0 | In the sensor's own unit |
-| Export limit while curtailed | 0 kW | 0 stops export entirely |
+| Trigger price | 0 | The rule fires while the sensor reads below this, in the sensor's own unit |
+| Maximum export when triggered | 0 kW | How much the inverter may export once the trigger is hit. 0 stops export |
 | Export limit otherwise | inverter rated power | Leave empty to use the rated power |
 | Sun entity | `sun.sun` | Used for the end-of-light cutoff |
-| Stop curtailing below this sun elevation | 12° | Restores full export before the dongle powers off |
-| Restore full export after | 15 min | A curtailed limit lapses unless the rule renews it |
-| Minimum time between curtailing changes | 120 s | Stops the limit flapping on a noisy price |
+| Stop limiting below this sun elevation | 12° | Restores full export before the dongle powers off |
+| Restore full export after | 15 min | A limited export lapses unless the rule renews it |
+| Minimum time between limiting changes | 120 s | Stops the limit flapping on a noisy price |
+
+The rule runs as soon as the integration is set up. To pause it, disable the integration entry, which
+restores full export.
 
 ## Entities
 
-- `switch.*_curtail_on_negative_price` turns the rule on. It starts off after install, and while it is
-  off the integration changes nothing.
-- `number.*_export_limit` sets the limit by hand, from 0 to the rated power.
-- `binary_sensor.*_export_curtailed` is on while the live limit is below the full limit.
+- `number.*_trigger_price` and `number.*_maximum_export_when_triggered` change those two settings live, for
+  dashboards and automations. Set the trigger price above the current price to see the rule act.
+- `sensor.*_export_limit` shows the limit the inverter is using now.
+- `binary_sensor.*_export_curtailed` is on while the trigger is holding export down.
 - `sensor.*_ac_output_power` and `sensor.*_export_limit_ratio` report what the inverter is doing.
 
 ## Safety
@@ -55,7 +58,7 @@ It is built so a failure leaves you exporting, not stuck at zero.
 
 - An unknown price, an unknown sun position or a low sun restores the full limit.
 - A limit below the full limit lapses back to it after the restore time unless the rule renews it.
-- Stopping Home Assistant or removing the integration restores the full limit.
+- Stopping Home Assistant, or disabling or removing the integration, restores the full limit.
 
 One case it cannot cover: if the dongle drops off the network while the limit is curtailed, nothing can
 write the restore until the dongle returns. Keep the sun cutoff generous, because the dongle powers off

@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import (CONF_CURTAIL_KW, CONF_FULL_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
+from .const import (CONF_MAX_EXPORT_KW, CONF_FULL_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
                     CONF_RESTORE_MINUTES, CONF_SUN_ENTITY, CONF_TRIGGER_PRICE, DEFAULTS, DOMAIN, SCAN_SECONDS)
 from .policy import decide
 from .sungrow_modbus import Dongle
@@ -20,7 +20,7 @@ class LimitCoordinator(DataUpdateCoordinator):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=SCAN_SECONDS))
         self.entry = entry
         self.dongle = Dongle(entry.data["host"])
-        self.enabled = False  # the "Curtail on negative price" switch; off means hands off
+        self._subscribed = None  # (price entity, sun entity) the listeners were set up for
         self._cancel_restore = None
         self._last_change = 0.0
         self._lock = asyncio.Lock()
@@ -45,8 +45,17 @@ class LimitCoordinator(DataUpdateCoordinator):
         return rated if not configured else min(float(configured), rated)
 
     @property
-    def curtail_kw(self):
-        return min(float(self.opt(CONF_CURTAIL_KW)), self.full_kw)
+    def max_export_kw(self):
+        return min(float(self.opt(CONF_MAX_EXPORT_KW)), self.full_kw)
+
+    @property
+    def trigger_price(self):
+        return float(self.opt(CONF_TRIGGER_PRICE))
+
+    async def async_update_setting(self, key, value):
+        """Persist a setting changed from an entity; the rule picks it up on the next evaluation."""
+        self.hass.config_entries.async_update_entry(self.entry, options={**self.entry.options, key: value})
+        await self.async_evaluate()
 
     def _float(self, entity, attr=None):
         st = self.hass.states.get(entity)
@@ -69,24 +78,18 @@ class LimitCoordinator(DataUpdateCoordinator):
             return
         async with self._lock:
             target = decide(
-                enabled=self.enabled, price=self._float(self.price_entity),
-                trigger_price=float(self.opt(CONF_TRIGGER_PRICE)),
+                price=self._float(self.price_entity), trigger_price=self.trigger_price,
                 sun_elevation=self._float(self.sun_entity, "elevation"),
                 min_elevation=float(self.opt(CONF_MIN_ELEVATION)), limit_kw=self.data["limit_kw"],
-                curtail_kw=self.curtail_kw, full_kw=self.full_kw,
+                triggered_kw=self.max_export_kw, full_kw=self.full_kw,
                 seconds_since_change=time.monotonic() - self._last_change,
                 min_interval=float(self.opt(CONF_MIN_INTERVAL)))
             if target is None:
-                if self.enabled and self.data["limit_kw"] < self.full_kw:
+                if self.data["limit_kw"] < self.full_kw:
                     self._arm_restore()  # still curtailed on purpose: keep the lapse timer ahead of us
                 return
             _LOGGER.info("export limit %s -> %s kW", self.data["limit_kw"], target)
             await self._write(target)
-
-    async def async_set_limit(self, kw: float):
-        """Manual set (number entity). Below the full limit it lapses back after the restore timeout."""
-        async with self._lock:
-            await self._write(kw)
 
     async def _write(self, kw):
         nominal = self.data["nominal_kw"]

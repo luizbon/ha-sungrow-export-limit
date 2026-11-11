@@ -4,7 +4,7 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_CURTAIL_KW, CONF_FULL_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
+from .const import (CONF_MAX_EXPORT_KW, CONF_FULL_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
                     CONF_RESTORE_MINUTES, CONF_SUN_ENTITY, CONF_TRIGGER_PRICE, DEFAULTS, DOMAIN)
 from .sungrow_modbus import Dongle
 
@@ -27,7 +27,7 @@ def _rule_schema(current: dict) -> vol.Schema:
     schema = {
         price_key: PRICE,
         vol.Required(CONF_TRIGGER_PRICE, default=d(CONF_TRIGGER_PRICE)): _num(-10, 10),
-        vol.Required(CONF_CURTAIL_KW, default=d(CONF_CURTAIL_KW)): _num(0, 100, 0.01, "kW"),
+        vol.Required(CONF_MAX_EXPORT_KW, default=d(CONF_MAX_EXPORT_KW)): _num(0, 100, 0.01, "kW"),
         vol.Optional(CONF_FULL_KW, description={"suggested_value": current.get(CONF_FULL_KW)}): _num(
             0.01, 100, 0.01, "kW"),
         vol.Required(CONF_SUN_ENTITY, default=d(CONF_SUN_ENTITY)): SUN,
@@ -40,8 +40,8 @@ def _rule_schema(current: dict) -> vol.Schema:
 
 def _check_rule(user_input: dict) -> dict:
     full = user_input.get(CONF_FULL_KW)
-    if full and user_input[CONF_CURTAIL_KW] >= full:
-        return {"base": "curtail_not_below_full"}
+    if full and user_input[CONF_MAX_EXPORT_KW] >= full:
+        return {"base": "max_export_not_below_full"}
     return {}
 
 

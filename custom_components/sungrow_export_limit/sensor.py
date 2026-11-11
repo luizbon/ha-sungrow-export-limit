@@ -4,6 +4,7 @@ from homeassistant.const import PERCENTAGE, UnitOfPower
 from .entity import SungrowEntity
 
 SENSORS = (
+    ("limit_kw", "Export limit", UnitOfPower.KILO_WATT, SensorDeviceClass.POWER),
     ("ac_w", "AC output power", UnitOfPower.WATT, SensorDeviceClass.POWER),
     ("ratio_pct", "Export limit ratio", PERCENTAGE, None),
 )

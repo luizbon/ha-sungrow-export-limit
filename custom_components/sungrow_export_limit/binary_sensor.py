@@ -8,7 +8,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class Curtailed(SungrowEntity, BinarySensorEntity):
-    """On while the live limit is below the full limit."""
+    """On while the live limit is below the full limit (the trigger is holding export down)."""
 
     def __init__(self, coordinator, entry_id):
         super().__init__(coordinator, entry_id, "curtailed", "Export curtailed")
