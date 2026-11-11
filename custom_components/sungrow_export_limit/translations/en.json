@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Sungrow inverter",
+        "description": "The dongle's Modbus port is encrypted by the inverter itself and needs no login. The rule is switched on later with the 'Curtail on negative price' switch.",
+        "data": {
+          "host": "Dongle IP address",
+          "price_entity": "Feed-in price sensor",
+          "trigger_price": "Curtail when the price is below",
+          "curtail_kw": "Export limit while curtailed",
+          "full_kw": "Export limit otherwise",
+          "sun_entity": "Sun entity",
+          "min_sun_elevation": "Stop curtailing below this sun elevation",
+          "restore_after_minutes": "Restore full export after",
+          "min_interval_seconds": "Minimum time between curtailing changes"
+        },
+        "data_description": {
+          "price_entity": "The sensor holding the price you are paid to export. A negative value means you pay to export.",
+          "trigger_price": "In the sensor's own unit. 0 means curtail only when the price is negative.",
+          "curtail_kw": "0 stops export entirely. Must be below the limit used otherwise.",
+          "full_kw": "Leave empty to use the inverter's rated power.",
+          "sun_entity": "Used for the end-of-light cutoff.",
+          "min_sun_elevation": "Restores full export before the light ends and the dongle powers off.",
+          "restore_after_minutes": "A curtailed limit lapses back by itself unless the rule renews it.",
+          "min_interval_seconds": "Stops the limit flapping on a noisy price."
+        }
+      },
+      "reconfigure": {
+        "title": "Dongle address",
+        "data": {
+          "host": "Dongle IP address"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not read the inverter through the dongle.",
+      "curtail_not_below_full": "The curtailed limit must be below the limit used otherwise."
+    },
+    "abort": {
+      "already_configured": "This dongle is already set up.",
+      "reconfigure_successful": "Dongle address updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Export limit rule",
+        "data": {
+          "price_entity": "Feed-in price sensor",
+          "trigger_price": "Curtail when the price is below",
+          "curtail_kw": "Export limit while curtailed",
+          "full_kw": "Export limit otherwise",
+          "sun_entity": "Sun entity",
+          "min_sun_elevation": "Stop curtailing below this sun elevation",
+          "restore_after_minutes": "Restore full export after",
+          "min_interval_seconds": "Minimum time between curtailing changes"
+        },
+        "data_description": {
+          "price_entity": "The sensor holding the price you are paid to export. A negative value means you pay to export.",
+          "trigger_price": "In the sensor's own unit. 0 means curtail only when the price is negative.",
+          "curtail_kw": "0 stops export entirely. Must be below the limit used otherwise.",
+          "full_kw": "Leave empty to use the inverter's rated power.",
+          "sun_entity": "Used for the end-of-light cutoff.",
+          "min_sun_elevation": "Restores full export before the light ends and the dongle powers off.",
+          "restore_after_minutes": "A curtailed limit lapses back by itself unless the rule renews it.",
+          "min_interval_seconds": "Stops the limit flapping on a noisy price."
+        }
+      }
+    },
+    "error": {
+      "curtail_not_below_full": "The curtailed limit must be below the limit used otherwise."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "curtailed": {
+        "name": "Export curtailed"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "domain": "sungrow_export_limit",
+  "name": "Sungrow export limit",
+  "codeowners": ["@luizbon"],
+  "config_flow": true,
+  "documentation": "https://github.com/luizbon/ha-sungrow-export-limit",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/luizbon/ha-sungrow-export-limit/issues",
+  "requirements": ["pycryptodomex==3.21.0"],
+  "version": "0.3.0"
+}
