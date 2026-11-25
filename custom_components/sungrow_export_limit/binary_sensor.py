@@ -8,11 +8,15 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 
 class Curtailed(SungrowEntity, BinarySensorEntity):
-    """On while the live limit is below the full limit (the trigger is holding export down)."""
+    """On while this integration is holding the limit down (it has stored the limit it found)."""
 
     def __init__(self, coordinator, entry_id):
         super().__init__(coordinator, entry_id, "curtailed", "Export curtailed")
 
     @property
     def is_on(self):
-        return self.coordinator.data["limit_kw"] < self.coordinator.full_kw - 0.005
+        return self.coordinator.curtailed
+
+    @property
+    def extra_state_attributes(self):
+        return {"original_limit_kw": self.coordinator.original_kw}

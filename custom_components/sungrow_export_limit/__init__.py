@@ -10,6 +10,7 @@ PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.NUMBER]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = LimitCoordinator(hass, entry)
+    await coordinator.async_load_claim()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
@@ -44,3 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await entry.runtime_data.async_shutdown_restore()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await LimitCoordinator.async_remove_claim(hass, entry)

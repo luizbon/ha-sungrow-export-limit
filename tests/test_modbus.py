@@ -64,6 +64,9 @@ class Client(unittest.TestCase):
         self.assertEqual(s, {"nominal_kw": 5.0, "switch_on": True, "limit_kw": 5.0, "ratio_pct": 100.0,
                              "ac_w": 1234})
 
+    def test_read_limit(self):
+        self.assertEqual(self.dongle.read_limit(), 5.0)
+
     def test_write_limit_encodes_register_5010(self):
         WRITES.clear()
         self.dongle.write_limit(0, 5.0)

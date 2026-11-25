@@ -31,7 +31,8 @@ class FormsSerialise(unittest.TestCase):
     def test_options_form_with_saved_values(self):
         fields = self._fields({"price_entity": "sensor.price", "trigger_price": 0.02, "max_export_kw": 1.5})
         names = {f["name"] for f in fields}
-        self.assertTrue({"price_entity", "trigger_price", "max_export_kw", "full_kw"} <= names)
+        self.assertTrue({"price_entity", "trigger_price", "max_export_kw"} <= names)
+        self.assertNotIn("full_kw", names)
 
     def test_setup_form_with_nothing_saved(self):
         self.assertTrue(self._fields({}))
@@ -40,12 +41,6 @@ class FormsSerialise(unittest.TestCase):
         for f in self._fields({}):
             unit = f.get("selector", {}).get("number", {}).get("unit_of_measurement", "")
             self.assertIsNotNone(unit, f["name"])
-
-    def test_rule_check_rejects_max_export_not_below_full(self):
-        bad = {self.flow.CONF_MAX_EXPORT_KW: 5.0, self.flow.CONF_FULL_KW: 5.0}
-        self.assertTrue(self.flow._check_rule(bad))
-        self.assertFalse(self.flow._check_rule({self.flow.CONF_MAX_EXPORT_KW: 0.0, self.flow.CONF_FULL_KW: 5.0}))
-        self.assertFalse(self.flow._check_rule({self.flow.CONF_MAX_EXPORT_KW: 0.0}))
 
 
 @unittest.skipUnless(HAVE_HA, "homeassistant not installed")

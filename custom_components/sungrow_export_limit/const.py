@@ -3,7 +3,6 @@ DOMAIN = "sungrow_export_limit"
 CONF_PRICE_ENTITY = "price_entity"
 CONF_TRIGGER_PRICE = "trigger_price"  # the rule fires while the price is below this
 CONF_MAX_EXPORT_KW = "max_export_kw"  # most the inverter may export while the trigger is hit
-CONF_FULL_KW = "full_kw"  # limit applied otherwise; blank = the inverter's rated power
 CONF_SUN_ENTITY = "sun_entity"
 CONF_MIN_ELEVATION = "min_sun_elevation"
 CONF_RESTORE_MINUTES = "restore_after_minutes"
@@ -14,7 +13,7 @@ DEFAULTS = {
     CONF_MAX_EXPORT_KW: 0.0,
     CONF_SUN_ENTITY: "sun.sun",
     CONF_MIN_ELEVATION: 12,  # degrees; below this the light is ending and the dongle will power off
-    CONF_RESTORE_MINUTES: 15,  # a curtailed limit lapses to full unless the rule keeps renewing it
+    CONF_RESTORE_MINUTES: 15,  # a curtailed limit lapses back to the original unless the rule keeps renewing it
     CONF_MIN_INTERVAL: 120,  # seconds between a change and the next curtail, to stop flapping
 }
 SCAN_SECONDS = 30

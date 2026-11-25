@@ -4,7 +4,7 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_MAX_EXPORT_KW, CONF_FULL_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
+from .const import (CONF_MAX_EXPORT_KW, CONF_MIN_ELEVATION, CONF_MIN_INTERVAL, CONF_PRICE_ENTITY,
                     CONF_RESTORE_MINUTES, CONF_SUN_ENTITY, CONF_TRIGGER_PRICE, DEFAULTS, DOMAIN)
 from .sungrow_modbus import Dongle
 
@@ -30,21 +30,12 @@ def _rule_schema(current: dict) -> vol.Schema:
         price_key: PRICE,
         vol.Required(CONF_TRIGGER_PRICE, default=d(CONF_TRIGGER_PRICE)): _num(-10, 10),
         vol.Required(CONF_MAX_EXPORT_KW, default=d(CONF_MAX_EXPORT_KW)): _num(0, 100, 0.01, "kW"),
-        vol.Optional(CONF_FULL_KW, description={"suggested_value": current.get(CONF_FULL_KW)}): _num(
-            0.01, 100, 0.01, "kW"),
         vol.Required(CONF_SUN_ENTITY, default=d(CONF_SUN_ENTITY)): SUN,
         vol.Required(CONF_MIN_ELEVATION, default=d(CONF_MIN_ELEVATION)): _num(0, 45, 1, "°"),
         vol.Required(CONF_RESTORE_MINUTES, default=d(CONF_RESTORE_MINUTES)): _num(1, 240, 1, "min"),
         vol.Required(CONF_MIN_INTERVAL, default=d(CONF_MIN_INTERVAL)): _num(10, 3600, 10, "s"),
     }
     return vol.Schema(schema)
-
-
-def _check_rule(user_input: dict) -> dict:
-    full = user_input.get(CONF_FULL_KW)
-    if full and user_input[CONF_MAX_EXPORT_KW] >= full:
-        return {"base": "max_export_not_below_full"}
-    return {}
 
 
 async def _probe(hass, host) -> dict:
@@ -67,7 +58,7 @@ class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
-            errors = _check_rule(user_input) or await _probe(self.hass, user_input[CONF_HOST])
+            errors = await _probe(self.hass, user_input[CONF_HOST])
             if not errors:
                 await self.async_set_unique_id(user_input[CONF_HOST])
                 self._abort_if_unique_id_configured()
@@ -96,9 +87,8 @@ class SungrowOptionsFlow(OptionsFlow):
         entry = self.config_entry
         current = {**entry.data, **entry.options}
         if user_input is not None:
-            errors = _check_rule(user_input)
             host = user_input[CONF_HOST]
-            if not errors and host != entry.data[CONF_HOST]:
+            if host != entry.data[CONF_HOST]:
                 errors = await _probe(self.hass, host)
             if not errors:
                 if host != entry.data[CONF_HOST]:

@@ -79,6 +79,10 @@ class Dongle:
                     "ratio_pct": regs[6] / 10, "ac_w": ac[0] + (ac[1] << 16)}
         return self._guard(run)
 
+    def read_limit(self):
+        """The feed-in limit (kW) on the inverter right now."""
+        return self._guard(lambda: self._read(3, REG_LIMIT, 1)[0] / 100)
+
     def write_limit(self, kw, max_kw):
         centi = round(kw * 100)
         if not 0 <= centi <= round(max_kw * 100):
