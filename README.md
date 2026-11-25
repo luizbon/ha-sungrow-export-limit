@@ -40,13 +40,15 @@ therefore reads a grid sensor from another device (a smart meter or a hybrid inv
 
 - if the site still exports, the limit is cut by that export (plus a 50 W margin);
 - if the site imports, the limit is raised by that import (plus 200 W), because it was cut too far;
+- if a battery power sensor is set and the battery charges hard, the limit is raised by that charging;
 - it never goes below the house load (rounded up to 0.1 kW) or the minimum limit (default 0.3 kW), and never
   above the limit the inverter had before;
 - changes smaller than the deadband (250 W) are ignored, and lowering waits at least 90 s after a write.
   Raising never waits.
 
-**Stopping.** The original limit is put back when the price reaches the stop price (default 0.005, the gap
-to the start price is the hysteresis), a needed sensor is missing or older than 5 minutes, the dongle cannot
+**Stopping.** The original limit is put back when the price has stayed at or above the stop price (default
+0.005, the gap to the start price is the hysteresis) for the hold time, or at once at the optional fast exit
+price, when the optional gate entity blocks, when a needed sensor is missing or older than 5 minutes, the dongle cannot
 be read, the sun drops below the cutoff elevation (12 degrees), the episode runs longer than 4 hours, or the
 rule has nothing left to cut. After the 4 hour stop it does not start again until the conditions have cleared
 once. The watchdog also puts the original limit back after 15 minutes unless the rule keeps renewing it.
@@ -59,29 +61,48 @@ episode event below, and turn the `switch.*_shadow_mode` entity off when you tru
 
 ## Settings
 
-Set these in the setup form and change them later with the Configure button.
+Nothing the rule does is fixed in code: every threshold, time and margin below is a setting, set in the setup
+form and changed later with the Configure button. The defaults suit a 5 kW inverter on spot pricing.
+(What stays fixed is the dongle's protocol: the register addresses, the encryption key and the Modbus unit
+id, because they are defined by the hardware.)
 
 | Setting | Default | What it does |
 |---|---|---|
 | Dongle IP address | required | Change it later with Reconfigure |
+| Dongle Modbus port | 502 | |
+| Dongle connection timeout | 15 s | Per connection |
+| Read the inverter every | 30 s | Also how often the rule runs. Applied after a reload |
 | Feed-in price sensor | required | The price you are paid to export. Negative means you pay to export |
 | Grid power sensor | required | Site grid power in W or kW, from a meter. The inverter has none |
 | Grid sensor reports export as negative | on | The usual meter convention. Turn off if export reads positive |
-| House load sensor | optional | Whole-house consumption. The limit never goes below it. Without it, only the minimum limit is the floor, so set that near your usual load |
+| House load sensor | optional | Whole-house consumption. The limit never goes below it. Without it only the minimum limit is the floor, so set that near your usual load |
 | Battery charge sensor | optional | Lets limiting start on a smaller export while the battery is full |
+| Battery power sensor | optional | A battery charging harder than the threshold raises the limit by that much |
+| Battery power reads positive while charging | on | Turn off if charging reads negative |
+| Battery charging that raises the limit | 150 W | |
+| Gate entity and gate state | optional | While the entity is in that state (ignoring case, for example a battery mode `force_charge`), limiting does not start and a running episode ends. An unknown or unavailable gate entity blocks starting |
 | Shadow mode | on | Report what would happen, write nothing |
 | Start limiting at or below this price | -0.005 | In the price sensor's own unit |
 | Stop limiting at or above this price | 0.005 | Must be above the start price |
+| Hold time before stopping | 120 s | The price must stay above the stop price this long. A missing price or sensor stops at once |
+| Stop at once at or above this price | optional | Skips the hold time above. Empty turns it off |
 | Grid export needed to start | 150 W | |
 | Battery full level / export needed then | 93% / 50 W | |
 | Hold time before starting | 120 s | Price and export must both hold this long |
+| Export that is cut from the limit | 40 W | Below this the limit is left as it is |
+| Import that raises the limit | 250 W | Above this the limit was cut too far |
+| Extra cut margin / Raise margin | 50 W / 200 W | Added to the cut and to a raise |
+| Round the limit to | 0.05 kW | |
+| Round the house load floor up to | 0.1 kW | |
 | Minimum limit | 0.3 kW | Nothing below this is ever written |
 | Ignore changes smaller than | 250 W | Saves writes to the inverter |
+| Minimum time between lowering writes | 90 s | Raising never waits |
 | Longest single episode | 4 h | Then it restores and waits for the conditions to clear |
+| Lockout after the longest episode | 0 min | Wait at least this long, and until the conditions have cleared once. 0 waits only for the conditions to clear |
 | Distrust sensor readings older than | 300 s | Slow cloud sensors are fine up to this age |
 | Sun entity and cutoff elevation | `sun.sun`, 12° | Restores before the dongle powers off |
 | Put the original limit back after | 15 min | Watchdog: lapses unless the rule renews it |
-| Minimum time between lowering writes | 90 s | Raising never waits |
+| Retry a failed restore after | 60 s | |
 
 The old price-only trigger (`trigger_price` and `max_export_kw`, and their number entities) is gone, as is
 the "Export limit otherwise" setting. If you upgrade from an earlier version, open Configure once and pick

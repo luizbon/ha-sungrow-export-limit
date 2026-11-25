@@ -8,11 +8,7 @@ configured minimum, nor above the limit the inverter had before. Anything doubtf
 import math
 from dataclasses import dataclass
 
-TOLERANCE_KW = 0.005
-EXPORT_SEEN_W = 40  # export above this is cut from the limit (the full-battery start can be as low as 50 W)
-IMPORT_SEEN_W = 250  # import above this means we cut too much
-CUT_MARGIN_W = 50
-RAISE_MARGIN_W = 200
+TOLERANCE_KW = 0.005  # half the inverter register's 0.01 kW resolution: not a setting
 
 
 @dataclass(frozen=True)
@@ -27,6 +23,15 @@ class Settings:
     deadband_kw: float
     max_seconds: float
     min_interval: float
+    exit_hold_seconds: float = 0.0
+    fast_exit_price: float | None = None
+    export_seen_w: float = 40.0
+    import_seen_w: float = 250.0
+    cut_margin_w: float = 50.0
+    raise_margin_w: float = 200.0
+    step_kw: float = 0.05
+    load_round_kw: float = 0.1
+    battery_charge_w: float = 150.0
 
 
 @dataclass(frozen=True)
@@ -37,6 +42,8 @@ class Reading:
     ac_w: float | None
     soc: float | None = None  # None when no battery sensor is configured
     load_w: float | None = None  # None when no load sensor is configured
+    battery_charge_w: float | None = None  # None when no battery power sensor is configured; positive = charging
+    blocked: bool = False  # the optional gate entity says not to limit
     healthy: bool = True  # every sensor that is needed is present and fresh
     sun_ok: bool = True
     limit_kw: float = 0.0  # the limit the inverter has (or, in shadow mode, would have)
@@ -59,22 +66,26 @@ def start_condition(s: Settings, r: Reading) -> bool:
 
 def floor_kw(s: Settings, r: Reading) -> float:
     """Never go below the configured minimum, nor below what the house is using."""
-    load = math.ceil(r.load_w / 100) / 10 if r.load_w else 0.0
+    step = s.load_round_kw
+    load = round(math.ceil(r.load_w / 1000 / step - 1e-9) * step, 4) if r.load_w else 0.0
     return max(s.min_limit_kw, load)
 
 
 def target_kw(s: Settings, r: Reading, original_kw: float) -> float:
-    if r.export_w > EXPORT_SEEN_W:
-        raw = r.ac_w - r.export_w - CUT_MARGIN_W
-    elif r.export_w < -IMPORT_SEEN_W:
-        raw = r.limit_kw * 1000 - r.export_w + RAISE_MARGIN_W
+    if r.export_w > s.export_seen_w:
+        raw = r.ac_w - r.export_w - s.cut_margin_w
+    elif r.export_w < -s.import_seen_w:
+        raw = r.limit_kw * 1000 - r.export_w + s.raise_margin_w
+    elif r.battery_charge_w is not None and r.battery_charge_w > s.battery_charge_w:
+        raw = r.limit_kw * 1000 + r.battery_charge_w + s.raise_margin_w  # the battery absorbs it, no import needed
     else:
         raw = r.limit_kw * 1000
-    return min(original_kw, max(floor_kw(s, r), round(raw / 1000 * 20) / 20))
+    stepped = round(raw / 1000 / s.step_kw) * s.step_kw
+    return min(original_kw, max(floor_kw(s, r), round(stepped, 4)))
 
 
 def decide(s: Settings, r: Reading, *, original_kw: float | None, enter_held_s: float, episode_s: float,
-           seconds_since_change: float, locked_out: bool = False) -> Decision:
+           seconds_since_change: float, locked_out: bool = False, exit_held_s: float = 0.0) -> Decision:
     """`original_kw` is the limit before we first lowered it, or None while we are not limiting."""
     if original_kw is not None:
         if not r.healthy:
@@ -83,7 +94,13 @@ def decide(s: Settings, r: Reading, *, original_kw: float | None, enter_held_s: 
             return Decision("restore", reason="sun_low")
         if episode_s >= s.max_seconds:
             return Decision("restore", reason="max_duration")
-        if r.price is None or r.price >= s.exit_price:
+        if r.blocked:
+            return Decision("restore", reason="blocked")
+        if r.price is None:
+            return Decision("restore", reason="price_recovered")
+        if s.fast_exit_price is not None and r.price >= s.fast_exit_price:
+            return Decision("restore", reason="price_recovered_fast")
+        if r.price >= s.exit_price and exit_held_s >= s.exit_hold_seconds:
             return Decision("restore", reason="price_recovered")
         target = target_kw(s, r, original_kw)
         if target >= original_kw - TOLERANCE_KW:
@@ -99,6 +116,8 @@ def decide(s: Settings, r: Reading, *, original_kw: float | None, enter_held_s: 
         return Decision("idle", reason="sensors_unhealthy")
     if not r.sun_ok:
         return Decision("idle", reason="sun_low")
+    if r.blocked:
+        return Decision("idle", reason="blocked")
     if not start_condition(s, r):
         return Decision("idle", reason="conditions_not_met")
     if enter_held_s < s.hold_seconds:

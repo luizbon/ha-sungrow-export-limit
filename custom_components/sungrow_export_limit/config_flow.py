@@ -4,14 +4,19 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers import selector
 
-from .const import (CONF_DEADBAND_W, CONF_ENTER_PRICE, CONF_EXIT_PRICE, CONF_GRID_ENTITY, CONF_GRID_EXPORT_NEGATIVE,
-                    CONF_HOLD_SECONDS, CONF_LOAD_ENTITY, CONF_MAX_HOURS, CONF_MIN_ELEVATION, CONF_MIN_EXPORT_W,
-                    CONF_MIN_INTERVAL, CONF_MIN_LIMIT_KW, CONF_PRICE_ENTITY, CONF_RESTORE_MINUTES, CONF_SHADOW,
-                    CONF_SOC_ENTITY, CONF_SOC_EXPORT_W, CONF_SOC_HIGH, CONF_STALE_SECONDS, CONF_SUN_ENTITY, DEFAULTS,
-                    DOMAIN, OPTIONAL_ENTITIES)
+from .const import (CONF_BATTERY_CHARGE_POSITIVE, CONF_BATTERY_CHARGE_W, CONF_BATTERY_POWER_ENTITY, CONF_BLOCK_ENTITY,
+                    CONF_BLOCK_STATE, CONF_CUT_MARGIN_W, CONF_DEADBAND_W, CONF_ENTER_PRICE, CONF_EXIT_HOLD_SECONDS,
+                    CONF_EXIT_PRICE, CONF_EXPORT_SEEN_W, CONF_FAST_EXIT_PRICE, CONF_GRID_ENTITY,
+                    CONF_GRID_EXPORT_NEGATIVE, CONF_HOLD_SECONDS, CONF_IMPORT_SEEN_W, CONF_LOAD_ENTITY,
+                    CONF_LOAD_ROUND_KW, CONF_LOCKOUT_MINUTES, CONF_MAX_HOURS, CONF_MIN_ELEVATION, CONF_MIN_EXPORT_W,
+                    CONF_MIN_INTERVAL, CONF_MIN_LIMIT_KW, CONF_PORT, CONF_PRICE_ENTITY, CONF_RAISE_MARGIN_W,
+                    CONF_RESTORE_MINUTES, CONF_RETRY_SECONDS, CONF_SCAN_SECONDS, CONF_SHADOW, CONF_SOC_ENTITY,
+                    CONF_SOC_EXPORT_W, CONF_SOC_HIGH, CONF_STALE_SECONDS, CONF_STEP_KW, CONF_SUN_ENTITY, CONF_TIMEOUT,
+                    DEFAULTS, DOMAIN, OPTIONAL_ENTITIES, OPTIONAL_VALUES)
 from .sungrow_modbus import Dongle
 
 SENSOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
+ANY_ENTITY = selector.EntitySelector(selector.EntitySelectorConfig())
 SUN = selector.EntitySelector(selector.EntitySelectorConfig(domain="sun"))
 
 
@@ -38,21 +43,40 @@ def _rule_schema(current: dict) -> vol.Schema:
         vol.Required(CONF_GRID_EXPORT_NEGATIVE, default=d(CONF_GRID_EXPORT_NEGATIVE)): selector.BooleanSelector(),
         entity(CONF_LOAD_ENTITY, False): SENSOR,
         entity(CONF_SOC_ENTITY, False): SENSOR,
+        entity(CONF_BATTERY_POWER_ENTITY, False): SENSOR,
+        vol.Required(CONF_BATTERY_CHARGE_POSITIVE, default=d(CONF_BATTERY_CHARGE_POSITIVE)): selector.BooleanSelector(),
+        vol.Required(CONF_BATTERY_CHARGE_W, default=d(CONF_BATTERY_CHARGE_W)): _num(0, 20000, 10, "W"),
+        entity(CONF_BLOCK_ENTITY, False): ANY_ENTITY,
+        vol.Optional(CONF_BLOCK_STATE, description={"suggested_value": current.get(CONF_BLOCK_STATE)}): str,
         vol.Required(CONF_SHADOW, default=d(CONF_SHADOW)): selector.BooleanSelector(),
         vol.Required(CONF_ENTER_PRICE, default=d(CONF_ENTER_PRICE)): _num(-10, 10),
         vol.Required(CONF_EXIT_PRICE, default=d(CONF_EXIT_PRICE)): _num(-10, 10),
+        vol.Optional(CONF_FAST_EXIT_PRICE, description={"suggested_value": current.get(CONF_FAST_EXIT_PRICE)}): _num(
+            -10, 10),
+        vol.Required(CONF_EXIT_HOLD_SECONDS, default=d(CONF_EXIT_HOLD_SECONDS)): _num(0, 1800, 10, "s"),
         vol.Required(CONF_MIN_EXPORT_W, default=d(CONF_MIN_EXPORT_W)): _num(0, 5000, 10, "W"),
         vol.Required(CONF_SOC_HIGH, default=d(CONF_SOC_HIGH)): _num(50, 100, 1, "%"),
         vol.Required(CONF_SOC_EXPORT_W, default=d(CONF_SOC_EXPORT_W)): _num(0, 5000, 10, "W"),
         vol.Required(CONF_HOLD_SECONDS, default=d(CONF_HOLD_SECONDS)): _num(0, 1800, 10, "s"),
+        vol.Required(CONF_EXPORT_SEEN_W, default=d(CONF_EXPORT_SEEN_W)): _num(0, 5000, 10, "W"),
+        vol.Required(CONF_IMPORT_SEEN_W, default=d(CONF_IMPORT_SEEN_W)): _num(0, 5000, 10, "W"),
+        vol.Required(CONF_CUT_MARGIN_W, default=d(CONF_CUT_MARGIN_W)): _num(0, 2000, 10, "W"),
+        vol.Required(CONF_RAISE_MARGIN_W, default=d(CONF_RAISE_MARGIN_W)): _num(0, 2000, 10, "W"),
+        vol.Required(CONF_STEP_KW, default=d(CONF_STEP_KW)): _num(0.01, 1, 0.01, "kW"),
+        vol.Required(CONF_LOAD_ROUND_KW, default=d(CONF_LOAD_ROUND_KW)): _num(0.01, 1, 0.01, "kW"),
         vol.Required(CONF_MIN_LIMIT_KW, default=d(CONF_MIN_LIMIT_KW)): _num(0, 100, 0.05, "kW"),
         vol.Required(CONF_DEADBAND_W, default=d(CONF_DEADBAND_W)): _num(0, 5000, 10, "W"),
         vol.Required(CONF_MAX_HOURS, default=d(CONF_MAX_HOURS)): _num(0.5, 24, 0.5, "h"),
+        vol.Required(CONF_LOCKOUT_MINUTES, default=d(CONF_LOCKOUT_MINUTES)): _num(0, 1440, 1, "min"),
         vol.Required(CONF_STALE_SECONDS, default=d(CONF_STALE_SECONDS)): _num(30, 3600, 10, "s"),
         vol.Required(CONF_SUN_ENTITY, default=d(CONF_SUN_ENTITY)): SUN,
         vol.Required(CONF_MIN_ELEVATION, default=d(CONF_MIN_ELEVATION)): _num(0, 45, 1, "°"),
         vol.Required(CONF_RESTORE_MINUTES, default=d(CONF_RESTORE_MINUTES)): _num(1, 240, 1, "min"),
         vol.Required(CONF_MIN_INTERVAL, default=d(CONF_MIN_INTERVAL)): _num(10, 3600, 10, "s"),
+        vol.Required(CONF_RETRY_SECONDS, default=d(CONF_RETRY_SECONDS)): _num(10, 3600, 10, "s"),
+        vol.Required(CONF_SCAN_SECONDS, default=d(CONF_SCAN_SECONDS)): _num(10, 600, 5, "s"),
+        vol.Required(CONF_PORT, default=d(CONF_PORT)): _num(1, 65535, 1),
+        vol.Required(CONF_TIMEOUT, default=d(CONF_TIMEOUT)): _num(2, 120, 1, "s"),
     })
 
 
@@ -64,13 +88,14 @@ def _check_rule(user_input: dict) -> dict:
 
 def _with_cleared(user_input: dict) -> dict:
     """A cleared optional sensor is absent from the form data; store None so it does not fall back to setup data."""
-    return {**{k: None for k in OPTIONAL_ENTITIES}, **user_input}
+    return {**{k: None for k in OPTIONAL_ENTITIES + OPTIONAL_VALUES}, **user_input}
 
 
-async def _probe(hass, host) -> dict:
+async def _probe(hass, host, port=None, timeout=None) -> dict:
     """Read the inverter through the dongle; returns a form error dict (empty when it works)."""
     try:
-        await hass.async_add_executor_job(Dongle(host).snapshot)
+        await hass.async_add_executor_job(
+            Dongle(host, int(port or DEFAULTS[CONF_PORT]), float(timeout or DEFAULTS[CONF_TIMEOUT])).snapshot)
     except Exception:  # noqa: BLE001
         return {"base": "cannot_connect"}
     return {}
@@ -87,7 +112,8 @@ class SungrowConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None):
         errors = {}
         if user_input is not None:
-            errors = _check_rule(user_input) or await _probe(self.hass, user_input[CONF_HOST])
+            errors = _check_rule(user_input) or await _probe(
+                self.hass, user_input[CONF_HOST], user_input.get(CONF_PORT), user_input.get(CONF_TIMEOUT))
             if not errors:
                 await self.async_set_unique_id(user_input[CONF_HOST])
                 self._abort_if_unique_id_configured()
@@ -119,7 +145,7 @@ class SungrowOptionsFlow(OptionsFlow):
             errors = _check_rule(user_input)
             host = user_input[CONF_HOST]
             if not errors and host != entry.data[CONF_HOST]:
-                errors = await _probe(self.hass, host)
+                errors = await _probe(self.hass, host, user_input.get(CONF_PORT), user_input.get(CONF_TIMEOUT))
             if not errors:
                 if host != entry.data[CONF_HOST]:
                     self.hass.config_entries.async_update_entry(

@@ -1,5 +1,5 @@
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
@@ -36,11 +36,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass, coordinator.watched_entities, _evaluate))
     entry.async_on_unload(coordinator.async_add_listener(_evaluate))
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _restore_on_stop))
-    coordinator._subscribed = (coordinator.watched_entities, entry.data[CONF_HOST])
+    coordinator._subscribed = (coordinator.watched_entities, coordinator.connection)
 
     async def _changed(hass: HomeAssistant, changed: ConfigEntry) -> None:
         # A different sensor or dongle address needs fresh listeners and a new client, so reload; plain value changes just re-run the rule.
-        if (coordinator.watched_entities, changed.data[CONF_HOST]) != coordinator._subscribed:
+        if (coordinator.watched_entities, coordinator.connection) != coordinator._subscribed:
             hass.config_entries.async_schedule_reload(changed.entry_id)
         else:
             await coordinator.async_evaluate()

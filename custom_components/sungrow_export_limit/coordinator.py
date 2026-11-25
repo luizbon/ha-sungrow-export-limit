@@ -9,11 +9,15 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .const import (CONF_DEADBAND_W, CONF_ENTER_PRICE, CONF_EXIT_PRICE, CONF_GRID_ENTITY, CONF_GRID_EXPORT_NEGATIVE,
-                    CONF_HOLD_SECONDS, CONF_LOAD_ENTITY, CONF_MAX_HOURS, CONF_MIN_ELEVATION, CONF_MIN_EXPORT_W,
-                    CONF_MIN_INTERVAL, CONF_MIN_LIMIT_KW, CONF_PRICE_ENTITY, CONF_RESTORE_MINUTES, CONF_SHADOW,
-                    CONF_SOC_ENTITY, CONF_SOC_EXPORT_W, CONF_SOC_HIGH, CONF_STALE_SECONDS, CONF_SUN_ENTITY, DEFAULTS,
-                    DOMAIN, EVENT_EPISODE, SCAN_SECONDS)
+from .const import (CONF_BATTERY_CHARGE_POSITIVE, CONF_BATTERY_CHARGE_W, CONF_BATTERY_POWER_ENTITY,
+                    CONF_BLOCK_ENTITY, CONF_BLOCK_STATE, CONF_CUT_MARGIN_W, CONF_DEADBAND_W, CONF_ENTER_PRICE,
+                    CONF_EXIT_HOLD_SECONDS, CONF_EXIT_PRICE, CONF_EXPORT_SEEN_W, CONF_FAST_EXIT_PRICE, CONF_GRID_ENTITY,
+                    CONF_GRID_EXPORT_NEGATIVE, CONF_HOLD_SECONDS, CONF_IMPORT_SEEN_W, CONF_LOAD_ENTITY,
+                    CONF_LOAD_ROUND_KW, CONF_LOCKOUT_MINUTES, CONF_MAX_HOURS, CONF_MIN_ELEVATION, CONF_MIN_EXPORT_W,
+                    CONF_MIN_INTERVAL, CONF_MIN_LIMIT_KW, CONF_PORT, CONF_PRICE_ENTITY, CONF_RAISE_MARGIN_W,
+                    CONF_RESTORE_MINUTES, CONF_RETRY_SECONDS, CONF_SCAN_SECONDS, CONF_SHADOW, CONF_SOC_ENTITY,
+                    CONF_SOC_EXPORT_W, CONF_SOC_HIGH, CONF_STALE_SECONDS, CONF_STEP_KW, CONF_SUN_ENTITY, CONF_TIMEOUT,
+                    DEFAULTS, DOMAIN, EVENT_EPISODE)
 from .controller import TOLERANCE_KW, Reading, Settings, decide, floor_kw, start_condition
 from .sungrow_modbus import Dongle
 
@@ -23,9 +27,9 @@ STORE_VERSION = 1
 
 class LimitCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry):
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=SCAN_SECONDS))
-        self.entry = entry
-        self.dongle = Dongle(entry.data["host"])
+        self.entry = entry  # opt() needs it before the base class is set up
+        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=float(self.opt(CONF_SCAN_SECONDS))))
+        self.dongle = Dongle(entry.data["host"], int(self.opt(CONF_PORT)), float(self.opt(CONF_TIMEOUT)))
         self._subscribed = None  # what the listeners and the client were set up for
         self._cancel_restore = None
         self._last_change = -1e9
@@ -34,6 +38,9 @@ class LimitCoordinator(DataUpdateCoordinator):
         # Set while this integration holds the limit down: the limit it found, the one it wrote, when it began.
         self._claim = None
         self._shadow = None  # the same, simulated, in shadow mode: {"original_kw", "limit_kw", "started"}
+        self._exit_since = None  # monotonic time the price first sat at or above the stop price
+        self._cleared = False  # the start condition went away since the lockout began
+        self._lock_until = 0.0  # monotonic time the lockout after a maximum duration stop ends
         self._enter_since = None  # monotonic time the start condition began to hold
         self._locked_out = False  # set by the max duration stop until the start condition goes away
         self.target_kw = None  # last limit the rule wanted (written, or only reported in shadow mode)
@@ -47,6 +54,8 @@ class LimitCoordinator(DataUpdateCoordinator):
     grid_entity = property(lambda self: self.opt(CONF_GRID_ENTITY))
     load_entity = property(lambda self: self.opt(CONF_LOAD_ENTITY))
     soc_entity = property(lambda self: self.opt(CONF_SOC_ENTITY))
+    battery_power_entity = property(lambda self: self.opt(CONF_BATTERY_POWER_ENTITY))
+    block_entity = property(lambda self: self.opt(CONF_BLOCK_ENTITY))
     sun_entity = property(lambda self: self.opt(CONF_SUN_ENTITY))
 
     @property
@@ -65,12 +74,34 @@ class LimitCoordinator(DataUpdateCoordinator):
             min_export_w=float(o(CONF_MIN_EXPORT_W)), soc_high=float(o(CONF_SOC_HIGH)),
             soc_export_w=float(o(CONF_SOC_EXPORT_W)), hold_seconds=float(o(CONF_HOLD_SECONDS)),
             min_limit_kw=float(o(CONF_MIN_LIMIT_KW)), deadband_kw=float(o(CONF_DEADBAND_W)) / 1000,
-            max_seconds=float(o(CONF_MAX_HOURS)) * 3600, min_interval=float(o(CONF_MIN_INTERVAL)))
+            max_seconds=float(o(CONF_MAX_HOURS)) * 3600, min_interval=float(o(CONF_MIN_INTERVAL)),
+            exit_hold_seconds=float(o(CONF_EXIT_HOLD_SECONDS)),
+            fast_exit_price=None if o(CONF_FAST_EXIT_PRICE) is None else float(o(CONF_FAST_EXIT_PRICE)),
+            export_seen_w=float(o(CONF_EXPORT_SEEN_W)), import_seen_w=float(o(CONF_IMPORT_SEEN_W)),
+            cut_margin_w=float(o(CONF_CUT_MARGIN_W)), raise_margin_w=float(o(CONF_RAISE_MARGIN_W)),
+            step_kw=float(o(CONF_STEP_KW)), load_round_kw=float(o(CONF_LOAD_ROUND_KW)),
+            battery_charge_w=float(o(CONF_BATTERY_CHARGE_W)))
 
     @property
     def watched_entities(self):
         return [e for e in (self.price_entity, self.grid_entity, self.load_entity, self.soc_entity,
-                            self.sun_entity) if e]
+                            self.battery_power_entity, self.block_entity, self.sun_entity) if e]
+
+    @property
+    def connection(self):
+        """What the dongle client was built from: a change needs a reload."""
+        return (self.entry.data["host"], int(self.opt(CONF_PORT)), float(self.opt(CONF_TIMEOUT)),
+                float(self.opt(CONF_SCAN_SECONDS)))
+
+    def _blocked(self):
+        """The optional gate. Unknown or unavailable counts as blocked: do not start on a gate we cannot read."""
+        if not self.block_entity:
+            return False
+        st = self.hass.states.get(self.block_entity)
+        if st is None or st.state in ("unknown", "unavailable"):
+            return True
+        wanted = (self.opt(CONF_BLOCK_STATE) or "").strip().lower()
+        return bool(wanted) and str(st.state).strip().lower() == wanted
 
     async def async_update_setting(self, key, value):
         """Persist a setting changed from an entity; the rule picks it up on the next evaluation."""
@@ -110,10 +141,15 @@ class LimitCoordinator(DataUpdateCoordinator):
         export = None if grid is None else (-grid if self.opt(CONF_GRID_EXPORT_NEGATIVE) else grid)
         load = self._watts(self.load_entity) if self.load_entity else None
         soc = self._float(self.soc_entity) if self.soc_entity else None
+        battery = self._watts(self.battery_power_entity) if self.battery_power_entity else None
+        if battery is not None and not self.opt(CONF_BATTERY_CHARGE_POSITIVE):
+            battery = -battery
         elevation = self._float(self.sun_entity, "elevation")
         healthy = (price is not None and export is not None and bool(self.last_update_success)
-                   and (not self.load_entity or load is not None) and (not self.soc_entity or soc is not None))
+                   and (not self.load_entity or load is not None) and (not self.soc_entity or soc is not None)
+                   and (not self.battery_power_entity or battery is not None))
         return Reading(price=price, export_w=export, ac_w=float(self.data["ac_w"]), soc=soc, load_w=load,
+                       battery_charge_w=battery, blocked=self._blocked(),
                        healthy=healthy, sun_ok=elevation is not None and elevation >= float(self.opt(CONF_MIN_ELEVATION)),
                        limit_kw=limit_kw)
 
@@ -204,20 +240,28 @@ class LimitCoordinator(DataUpdateCoordinator):
                 self._enter_since = self._enter_since or now
             else:
                 self._enter_since = None
-                self._locked_out = False
+                self._cleared = True
         else:
             self._enter_since = None
+        if self._locked_out and self._cleared and now >= self._lock_until:
+            self._locked_out = False  # the conditions cleared once and the lockout time is over
+        if r.price is not None and r.price >= s.exit_price:
+            self._exit_since = self._exit_since or now
+        else:
+            self._exit_since = None
         d = decide(s, r, original_kw=held["original_kw"] if held else None,
                    enter_held_s=now - self._enter_since if self._enter_since else 0,
                    episode_s=time.time() - held["started"] if held else 0,
-                   seconds_since_change=now - self._last_change, locked_out=self._locked_out)
+                   seconds_since_change=now - self._last_change, locked_out=self._locked_out,
+                   exit_held_s=now - self._exit_since if self._exit_since else 0)
         self.reason = d.reason
         if d.action == "set":
             self.target_kw = d.target_kw
         elif d.action == "restore":
             self.target_kw = None
         if d.reason == "max_duration":
-            self._locked_out = True
+            self._locked_out, self._cleared = True, False
+            self._lock_until = now + float(self.opt(CONF_LOCKOUT_MINUTES)) * 60
             _LOGGER.warning("limiting stopped after the maximum duration of %s h", self.opt(CONF_MAX_HOURS))
         if d.action == "restore":
             if sim:
@@ -335,9 +379,9 @@ class LimitCoordinator(DataUpdateCoordinator):
             try:
                 await self._restore_locked()
             except Exception:  # noqa: BLE001
-                _LOGGER.exception("could not restore the export limit; retrying in 60 s")
+                _LOGGER.exception("could not restore the export limit; retrying later")
             if self._claim:  # not restored yet (read or write failed): try again
-                self._cancel_restore = async_call_later(self.hass, 60, self._lapse)
+                self._cancel_restore = async_call_later(self.hass, float(self.opt(CONF_RETRY_SECONDS)), self._lapse)
 
     async def async_shutdown_restore(self):
         """Best effort on unload or HA stop: put back the limit we lowered. The claim stays saved if it fails."""

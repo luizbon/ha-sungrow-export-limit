@@ -36,6 +36,22 @@ class FormsSerialise(unittest.TestCase):
         self.assertNotIn("full_kw", names)
         self.assertNotIn("trigger_price", names)
 
+    def test_every_tunable_is_a_form_field(self):
+        from custom_components.sungrow_export_limit import const
+        names = {f["name"] for f in self._fields({})}
+        for key in const.DEFAULTS:
+            self.assertIn(key, names, f"{key} has a default but no form field")
+
+    def test_every_form_field_is_translated(self):
+        import json
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "custom_components",
+                            "sungrow_export_limit", "translations", "en.json")
+        t = json.load(open(path))
+        names = {f["name"] for f in self._fields({})} | {"host"}
+        for step in (t["config"]["step"]["user"], t["options"]["step"]["init"]):
+            self.assertEqual(names - set(step["data"]), set())
+            self.assertEqual(names - set(step["data_description"]), set())
+
     def test_setup_form_starts_in_shadow_mode(self):
         shadow = next(f for f in self._fields({}) if f["name"] == "shadow_mode")
         self.assertTrue(shadow["default"])

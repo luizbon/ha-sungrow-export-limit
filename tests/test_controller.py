@@ -110,5 +110,46 @@ class Limiting(unittest.TestCase):
         self.assertEqual((d.action, d.reason), ("restore", "no_need_to_limit"))
 
 
+class Tunables(unittest.TestCase):
+    def s(self, **kw):
+        return c.Settings(**{**S.__dict__, **kw})
+
+    def test_exit_hold(self):
+        st = self.s(exit_hold_seconds=120)
+        r = rd(limit_kw=0.95, price=0.01)
+        self.assertNotEqual(c.decide(st, r, original_kw=5.0, enter_held_s=0, episode_s=1, seconds_since_change=999,
+                                     exit_held_s=60).action, "restore")
+        self.assertEqual(c.decide(st, r, original_kw=5.0, enter_held_s=0, episode_s=1, seconds_since_change=999,
+                                  exit_held_s=120).reason, "price_recovered")
+
+    def test_fast_exit_skips_the_hold(self):
+        st = self.s(exit_hold_seconds=600, fast_exit_price=0.02)
+        d = c.decide(st, rd(limit_kw=0.95, price=0.03), original_kw=5.0, enter_held_s=0, episode_s=1,
+                     seconds_since_change=999, exit_held_s=0)
+        self.assertEqual(d.reason, "price_recovered_fast")
+
+    def test_battery_charging_raises(self):
+        r = rd(limit_kw=0.95, ac_w=950, export_w=0, battery_charge_w=1000)
+        self.assertEqual(held(r).target_kw, 2.15)
+        self.assertEqual(held(rd(limit_kw=0.95, ac_w=950, export_w=0, battery_charge_w=100)).action, "hold")
+
+    def test_blocked_gate(self):
+        self.assertEqual(idle(rd(blocked=True)).reason, "blocked")
+        self.assertEqual(held(rd(limit_kw=0.95, blocked=True)).reason, "blocked")
+
+    def test_margins_step_and_thresholds(self):
+        self.assertEqual(c.decide(self.s(cut_margin_w=0, step_kw=0.5), R, original_kw=None, enter_held_s=999, episode_s=0,
+                                  seconds_since_change=999).target_kw, 1.0)
+        r = rd(limit_kw=0.95, ac_w=950, export_w=-300)  # importing 300 W
+        self.assertEqual(c.decide(self.s(import_seen_w=500), r, original_kw=5.0, enter_held_s=0, episode_s=1,
+                                  seconds_since_change=999).action, "hold")
+        self.assertEqual(c.decide(self.s(raise_margin_w=700), r, original_kw=5.0, enter_held_s=0, episode_s=1,
+                                  seconds_since_change=999).target_kw, 1.95)
+
+    def test_load_round_option(self):
+        self.assertEqual(c.floor_kw(self.s(load_round_kw=0.5), rd(load_w=1230)), 1.5)
+        self.assertEqual(c.floor_kw(self.s(load_round_kw=0.01), rd(load_w=1230)), 1.23)
+
+
 if __name__ == "__main__":
     unittest.main()

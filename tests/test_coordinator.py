@@ -68,13 +68,14 @@ class Claim(unittest.TestCase):
                                  bus=SimpleNamespace(async_fire=lambda t, d: c.events.append(d)))
         c.entry = SimpleNamespace(entry_id="e1", options={}, data={
             "host": "h", "price_entity": "sensor.p", "grid_entity": "sensor.g", "shadow_mode": False,
-            "hold_seconds": 0, "sun_entity": "sun.sun", **options})
+            "hold_seconds": 0, "exit_hold_seconds": 0, "sun_entity": "sun.sun", **options})
         c.dongle = FakeDongle(limit)
         c.events = []
         c._states = {}
         self.sensors(c)
         c._cancel_restore, c._last_change, c._lock = None, -1e9, asyncio.Lock()
         c._store, c._claim, c._shadow, c._enter_since, c._locked_out = FakeStore(), None, None, None, False
+        c._exit_since, c._lock_until, c._cleared = None, 0.0, False
         c.target_kw, c.reason, c.last_update_success = None, "", True
         c.data = {"nominal_kw": 5.0, "limit_kw": limit, "ac_w": self.ac}
 
@@ -239,6 +240,132 @@ class Claim(unittest.TestCase):
         self.set_price(c, -0.01)
         self.go(c.async_evaluate())  # ...so it may start a new episode
         self.assertEqual(c.dongle.writes[-1], 0.95)
+
+    # --- every tunable changes behaviour ---
+
+    def test_cut_margin_and_step_options(self):
+        c = self.make(5.0, cut_margin_w=0, step_kw=0.5)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [1.0])  # 3000 - 2000 - 0 W = 1.0 kW (default: 0.95)
+
+    def test_min_limit_option(self):
+        c = self.make(5.0, min_limit_kw=2.0)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [2.0])
+
+    def test_enter_price_option(self):
+        c = self.make(5.0, enter_price=-0.05)  # -0.01 is not low enough now
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_min_export_option(self):
+        c = self.make(5.0, min_export_w=2500)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_soc_options(self):
+        self.grid = -80.0
+        c = self.make(5.0, soc_entity="sensor.s", soc_high=90, soc_export_w=50)
+        self.sensors(c, **{"sensor.s": SimpleNamespace(state="95", attributes={}, last_updated=c._states["sensor.p"].last_updated)})
+        self.go(c.async_evaluate())
+        self.assertEqual(len(c.dongle.writes), 1)
+        c = self.make(5.0, soc_entity="sensor.s", soc_high=97, soc_export_w=50)
+        self.sensors(c, **{"sensor.s": SimpleNamespace(state="95", attributes={}, last_updated=c._states["sensor.p"].last_updated)})
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_grid_sign_option(self):
+        c = self.make(5.0, grid_export_negative=False)  # -2000 now means importing
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_stale_option(self):
+        c = self.make(5.0, stale_seconds=30)
+        self.sensors(c, age=60)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_sun_elevation_option(self):
+        c = self.make(5.0, min_sun_elevation=60)  # the sun is at 40
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_exit_hold_and_fast_exit_options(self):
+        c = self.make(3.0, exit_hold_seconds=600)
+        self.go(c.async_evaluate())
+        self.set_price(c, 0.01)  # above the stop price, but not for long enough
+        self.go(c.async_evaluate())
+        self.assertTrue(c.curtailed)
+        c = self.make(3.0, exit_hold_seconds=600, fast_exit_price=0.02)
+        self.go(c.async_evaluate())
+        self.set_price(c, 0.03)  # above the fast exit price: no waiting
+        self.go(c.async_evaluate())
+        self.assertFalse(c.curtailed)
+        self.assertEqual(c.dongle.limit, 3.0)
+
+    def test_block_gate_option(self):
+        gate = lambda c, state: self.sensors(c, **{"select.mode": SimpleNamespace(
+            state=state, attributes={}, last_updated=c._states["sensor.p"].last_updated)})
+        c = self.make(5.0, block_entity="select.mode", block_state="force_charge")
+        gate(c, "force_charge")
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [])  # blocked: does not start
+        gate(c, "normal")
+        self.go(c.async_evaluate())
+        self.assertTrue(c.curtailed)
+        gate(c, "Force_Charge")
+        self.go(c.async_evaluate())  # blocked while limiting: put the original back
+        self.assertFalse(c.curtailed)
+        self.assertEqual(c.dongle.limit, 5.0)
+
+    def test_unreadable_gate_blocks_starting(self):
+        c = self.make(5.0, block_entity="select.mode", block_state="force_charge")
+        self.go(c.async_evaluate())  # the gate entity does not exist
+        self.assertEqual(c.dongle.writes, [])
+
+    def test_battery_power_option_raises_the_limit(self):
+        c = self.make(5.0, battery_power_entity="sensor.b", battery_charge_w=150)
+        batt = lambda v: self.sensors(c, **{"sensor.b": SimpleNamespace(
+            state=str(v), attributes={"unit_of_measurement": "W"}, last_updated=c._states["sensor.p"].last_updated)})
+        batt(0)
+        self.go(c.async_evaluate())
+        self.grid, self.ac = 0.0, 950  # no export any more, battery soaking up 1 kW
+        c.data = {**c.data, "ac_w": 950}
+        batt(1000)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [0.95, 2.15])  # 0.95 + 1.0 + 0.2 margin
+        c2 = self.make(5.0, battery_power_entity="sensor.b", battery_charge_positive=False)  # sign flipped
+        self.assertEqual(c2.settings.battery_charge_w, 150.0)
+
+    def test_lockout_minutes_option(self):
+        c = self.make(3.0, lockout_minutes=60)
+        self.go(c.async_evaluate())
+        c._claim["started"] = time.time() - 5 * 3600
+        self.go(c.async_evaluate())  # max duration stop
+        self.set_price(c, 0.1)
+        self.go(c.async_evaluate())  # conditions clear, but the lockout has not run out
+        self.set_price(c, -0.01)
+        c._last_change = -1e9
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [0.95, 3.0])
+        c._lock_until = 0.0  # the hour is over
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes[-1], 0.95)
+
+    def test_deadband_and_interval_options(self):
+        c = self.make(5.0, deadband_w=5000)
+        self.go(c.async_evaluate())
+        self.grid, self.ac = 500.0, 950
+        c.data = {**c.data, "ac_w": 950}
+        self.sensors(c)
+        self.go(c.async_evaluate())
+        self.assertEqual(c.dongle.writes, [0.95])  # the +0.7 kW raise is inside the huge deadband
+
+    def test_defaults_come_from_const_and_options_override_them(self):
+        c = self.make(5.0)
+        self.assertEqual(c.opt("export_seen_w"), 40)
+        c.entry.options = {"export_seen_w": 500}
+        self.assertEqual(c.settings.export_seen_w, 500.0)
 
     # --- shadow mode ---
 
