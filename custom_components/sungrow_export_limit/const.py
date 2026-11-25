@@ -1,19 +1,45 @@
 DOMAIN = "sungrow_export_limit"
 
 CONF_PRICE_ENTITY = "price_entity"
-CONF_TRIGGER_PRICE = "trigger_price"  # the rule fires while the price is below this
-CONF_MAX_EXPORT_KW = "max_export_kw"  # most the inverter may export while the trigger is hit
+CONF_GRID_ENTITY = "grid_entity"  # grid power; export is negative unless CONF_GRID_EXPORT_NEGATIVE is off
+CONF_GRID_EXPORT_NEGATIVE = "grid_export_negative"
+CONF_LOAD_ENTITY = "load_entity"  # optional: whole-house consumption, sets the floor of the limit
+CONF_SOC_ENTITY = "soc_entity"  # optional: battery state of charge
+CONF_ENTER_PRICE = "enter_price"  # start limiting while the price is at or below this
+CONF_EXIT_PRICE = "exit_price"  # stop limiting once the price is at or above this
+CONF_MIN_EXPORT_W = "min_export_w"
+CONF_SOC_HIGH = "soc_high"
+CONF_SOC_EXPORT_W = "soc_export_w"
+CONF_HOLD_SECONDS = "hold_seconds"
+CONF_MIN_LIMIT_KW = "min_limit_kw"
+CONF_DEADBAND_W = "deadband_w"
+CONF_MAX_HOURS = "max_hours"
+CONF_STALE_SECONDS = "stale_seconds"
+CONF_SHADOW = "shadow_mode"
 CONF_SUN_ENTITY = "sun_entity"
 CONF_MIN_ELEVATION = "min_sun_elevation"
 CONF_RESTORE_MINUTES = "restore_after_minutes"
 CONF_MIN_INTERVAL = "min_interval_seconds"
 
+OPTIONAL_ENTITIES = (CONF_LOAD_ENTITY, CONF_SOC_ENTITY)
+EVENT_EPISODE = f"{DOMAIN}_episode"
+
 DEFAULTS = {
-    CONF_TRIGGER_PRICE: 0.0,
-    CONF_MAX_EXPORT_KW: 0.0,
+    CONF_GRID_EXPORT_NEGATIVE: True,  # the usual meter convention: positive imports, negative exports
+    CONF_ENTER_PRICE: -0.005,
+    CONF_EXIT_PRICE: 0.005,
+    CONF_MIN_EXPORT_W: 150,  # grid export that has to be seen before limiting starts
+    CONF_SOC_HIGH: 93,  # a full battery cannot absorb the surplus, so a smaller export is enough
+    CONF_SOC_EXPORT_W: 50,
+    CONF_HOLD_SECONDS: 120,  # the start condition must hold this long
+    CONF_MIN_LIMIT_KW: 0.3,  # never write below this
+    CONF_DEADBAND_W: 250,  # ignore smaller changes of the target
+    CONF_MAX_HOURS: 4.0,  # one episode never limits for longer than this
+    CONF_STALE_SECONDS: 300,  # a price, grid, load or battery reading older than this is not trusted
+    CONF_SHADOW: True,  # compute and report, write nothing, until you turn this off
     CONF_SUN_ENTITY: "sun.sun",
     CONF_MIN_ELEVATION: 12,  # degrees; below this the light is ending and the dongle will power off
-    CONF_RESTORE_MINUTES: 15,  # a curtailed limit lapses back to the original unless the rule keeps renewing it
-    CONF_MIN_INTERVAL: 120,  # seconds between a change and the next curtail, to stop flapping
+    CONF_RESTORE_MINUTES: 15,  # a limit we lowered lapses back unless the rule keeps renewing it
+    CONF_MIN_INTERVAL: 90,  # seconds between writes that lower the limit
 }
 SCAN_SECONDS = 30

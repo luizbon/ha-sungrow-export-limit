@@ -2,8 +2,9 @@
 
 [![Validate](https://github.com/luizbon/ha-sungrow-export-limit/actions/workflows/validate.yml/badge.svg)](https://github.com/luizbon/ha-sungrow-export-limit/actions/workflows/validate.yml)
 
-A Home Assistant integration that sets a Sungrow inverter's feed-in limit from a price sensor. The usual
-use is to stop exporting while the feed-in price is negative and export freely the rest of the time.
+A Home Assistant integration that limits a Sungrow inverter's feed-in limit while exporting costs you
+money, and tunes that limit to your house so it cuts the export without cutting your own supply. It
+looks at a price sensor and a grid power sensor, and it only ever undoes its own change.
 
 It talks to the WiNet dongle over your network. There is no cloud and no dongle login.
 
@@ -24,6 +25,38 @@ folder and restart.
 
 Then go to Settings, Devices & services, Add integration, and search for "Sungrow export limit".
 
+## How the rule works
+
+Some Sungrow inverters, such as the SG5K-D, have no meter. Register 5010 then caps the inverter's total
+AC output, not the grid export, so a blunt limit of 0 also cuts the power your own house is using. The rule
+therefore reads a grid sensor from another device (a smart meter or a hybrid inverter's CT) and closes the loop.
+
+**Starting.** Limiting starts only when all of these have held for the hold time (2 minutes by default):
+
+- the price is at or below the start price (default -0.005), and
+- the site really exports at least 150 W, or the battery is at or above 93% and exports at least 50 W.
+
+**While limiting.** About every 30 seconds the limit follows the house:
+
+- if the site still exports, the limit is cut by that export (plus a 50 W margin);
+- if the site imports, the limit is raised by that import (plus 200 W), because it was cut too far;
+- it never goes below the house load (rounded up to 0.1 kW) or the minimum limit (default 0.3 kW), and never
+  above the limit the inverter had before;
+- changes smaller than the deadband (250 W) are ignored, and lowering waits at least 90 s after a write.
+  Raising never waits.
+
+**Stopping.** The original limit is put back when the price reaches the stop price (default 0.005, the gap
+to the start price is the hysteresis), a needed sensor is missing or older than 5 minutes, the dongle cannot
+be read, the sun drops below the cutoff elevation (12 degrees), the episode runs longer than 4 hours, or the
+rule has nothing left to cut. After the 4 hour stop it does not start again until the conditions have cleared
+once. The watchdog also puts the original limit back after 15 minutes unless the rule keeps renewing it.
+
+## Shadow mode
+
+A new setup starts in shadow mode. The rule evaluates everything and reports what it would do, and writes
+nothing to the inverter. Watch `sensor.*_target_export_limit` (its attributes show the reason) and the
+episode event below, and turn the `switch.*_shadow_mode` entity off when you trust it.
+
 ## Settings
 
 Set these in the setup form and change them later with the Configure button.
@@ -31,48 +64,66 @@ Set these in the setup form and change them later with the Configure button.
 | Setting | Default | What it does |
 |---|---|---|
 | Dongle IP address | required | Change it later with Reconfigure |
-| Feed-in price sensor | required | Any sensor. A negative value means you pay to export |
-| Trigger price | 0 | The rule fires while the sensor reads below this, in the sensor's own unit |
-| Maximum export when triggered | 0 kW | The limit written once the trigger is hit. 0 stops export. A limit already at or below it is left alone |
-| Sun entity | `sun.sun` | Used for the end-of-light cutoff |
-| Stop limiting below this sun elevation | 12° | Puts the original limit back before the dongle powers off |
-| Put the original limit back after | 15 min | A limit this integration lowered lapses back unless the rule renews it |
-| Minimum time between limiting changes | 120 s | Stops the limit flapping on a noisy price |
+| Feed-in price sensor | required | The price you are paid to export. Negative means you pay to export |
+| Grid power sensor | required | Site grid power in W or kW, from a meter. The inverter has none |
+| Grid sensor reports export as negative | on | The usual meter convention. Turn off if export reads positive |
+| House load sensor | optional | Whole-house consumption. The limit never goes below it. Without it, only the minimum limit is the floor, so set that near your usual load |
+| Battery charge sensor | optional | Lets limiting start on a smaller export while the battery is full |
+| Shadow mode | on | Report what would happen, write nothing |
+| Start limiting at or below this price | -0.005 | In the price sensor's own unit |
+| Stop limiting at or above this price | 0.005 | Must be above the start price |
+| Grid export needed to start | 150 W | |
+| Battery full level / export needed then | 93% / 50 W | |
+| Hold time before starting | 120 s | Price and export must both hold this long |
+| Minimum limit | 0.3 kW | Nothing below this is ever written |
+| Ignore changes smaller than | 250 W | Saves writes to the inverter |
+| Longest single episode | 4 h | Then it restores and waits for the conditions to clear |
+| Distrust sensor readings older than | 300 s | Slow cloud sensors are fine up to this age |
+| Sun entity and cutoff elevation | `sun.sun`, 12° | Restores before the dongle powers off |
+| Put the original limit back after | 15 min | Watchdog: lapses unless the rule renews it |
+| Minimum time between lowering writes | 90 s | Raising never waits |
 
-The rule runs as soon as the integration is set up, but it writes nothing until the price actually
-falls below the trigger. To pause it, disable the integration entry, which puts the original limit back.
+The old price-only trigger (`trigger_price` and `max_export_kw`, and their number entities) is gone, as is
+the "Export limit otherwise" setting. If you upgrade from an earlier version, open Configure once and pick
+the grid sensor: until it is set, the rule has nothing to act on and writes nothing.
 
 ## Entities
 
-- `number.*_trigger_price` and `number.*_maximum_export_when_triggered` change those two settings live, for
-  dashboards and automations. Set the trigger price above the current price to see the rule act.
+- `switch.*_shadow_mode` turns shadow mode on and off.
+- `sensor.*_target_export_limit` is the limit the rule wants while limiting (empty otherwise). The attributes
+  give the mode, the reason for the last decision and the house load floor.
 - `sensor.*_export_limit` shows the limit the inverter is using now.
-- `binary_sensor.*_export_curtailed` is on while the trigger is holding export down.
+- `binary_sensor.*_export_curtailed` is on while the integration holds a saved limit. Its `original_limit_kw`
+  attribute is the value that will be put back.
 - `sensor.*_ac_output_power` and `sensor.*_export_limit_ratio` report what the inverter is doing.
+
+The integration fires a `sungrow_export_limit_episode` event when an episode starts, changes and ends, in
+shadow mode too. It carries `event` (start, update or end), `mode` (shadow or armed), `reason`, `limit_kw`,
+`original_kw`, `duration_min` and the price, export, load, battery and AC readings. Use it to send
+notifications or keep a log.
 
 ## Safety
 
 The integration writes one register (5010, the feed-in limit) and never outside 0 to the rated power.
-It only undoes what it did itself, and it is built so a failure leaves you exporting, not stuck at zero.
+It only undoes what it did itself, and it is built so a failure leaves you exporting, not stuck low.
 
-- It never writes while the rule is not curtailing. At setup, at the first price or sun change, or with
-  an unavailable price sensor, the limit on the inverter is left exactly as you or your installer set it.
-- When the rule first curtails, it reads the limit from the inverter and saves it (in Home Assistant's
-  storage, so it survives a restart). If that read fails, it does not curtail.
-- It never raises a limit. If the limit is already at or below "Maximum export when triggered" (for
+- It never writes while the rule is not limiting. At setup, at the first price or sun change, or with an
+  unavailable sensor, the limit on the inverter is left exactly as you or your installer set it. In shadow
+  mode it never writes at all.
+- When the rule first limits, it reads the limit from the inverter and saves it (in Home Assistant's
+  storage, so it survives a restart). If that read fails, it does not limit.
+- It never raises a limit above what it found. If the limit is already at or below what the rule wants (for
   example an installer cap), nothing is written.
-- Restoring writes that saved value, not the rated power. It happens when the price recovers, the price
-  or sun position becomes unknown, the sun is low, the restore time lapses, the integration is disabled
-  or removed, or Home Assistant stops. A restart while curtailed still restores it.
-- Before restoring, it reads the limit again. If something else changed it while the integration held
-  it down (you, the installer's tools, another integration), that is no longer the integration's to undo:
-  it logs a warning, forgets the saved value and writes nothing. If the limit was set back to the saved
-  value already, it just forgets it. If the rule is still triggered afterwards, it may curtail again,
-  and it then saves the new value it finds.
-- `binary_sensor.*_export_curtailed` is on while the integration holds a saved limit, and its
-  `original_limit_kw` attribute shows the value that will be put back.
+- Restoring writes that saved value, not the rated power. It happens on every stop condition above, when the
+  integration is disabled or removed, or when Home Assistant stops. A restart while limiting still restores it.
+- Before changing or restoring, it reads the limit again. If something else changed it while the integration
+  held it down (you, the installer's tools, another integration), that is no longer the integration's to
+  undo: it logs a warning, forgets the saved value and writes nothing. If the limit was set back to the saved
+  value already, it just forgets it. If the rule is still triggered afterwards, it may start again, and it
+  then saves the new value it finds.
+- Turning shadow mode on while limiting puts the original limit back first.
 
-One case it cannot cover: if the dongle drops off the network while the limit is curtailed, nothing can
+One case it cannot cover: if the dongle drops off the network while the limit is lowered, nothing can
 write the restore until the dongle returns. Keep the sun cutoff generous, because the dongle powers off
 with the inverter at the end of the day.
 
@@ -82,7 +133,8 @@ Tested on an SG5K-D behind a WiNet-S dongle. Other Sungrow models that use the s
 5010 and 5014) may work. Reports are welcome in the issue tracker.
 
 Whether the limit caps real grid export, or only the inverter's output, depends on whether your site has
-a meter the inverter can see. Check that on your own system before relying on it.
+a meter the inverter can see. Without one it caps the inverter's output, which is why the rule needs a grid
+sensor from another device and tracks the house load. Check it on your own system, in shadow mode first.
 
 ## Development
 

@@ -1,11 +1,13 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .const import DOMAIN
 from .coordinator import LimitCoordinator
 
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.NUMBER]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR, Platform.SWITCH]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -13,6 +15,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_load_claim()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
+
+    # The price-only trigger and its two number entities were replaced by the closed-loop rule.
+    registry = er.async_get(hass)
+    for suffix in ("trigger_price", "max_export_when_triggered"):
+        old = registry.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_{suffix}")
+        if old:
+            registry.async_remove(old)
 
     @callback
     def _evaluate(*_args) -> None:
@@ -24,14 +33,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.async_create_task(coordinator.async_shutdown_restore())  # tracked, so HA waits for it
 
     entry.async_on_unload(async_track_state_change_event(
-        hass, [coordinator.price_entity, coordinator.sun_entity], _evaluate))
+        hass, coordinator.watched_entities, _evaluate))
     entry.async_on_unload(coordinator.async_add_listener(_evaluate))
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _restore_on_stop))
-    coordinator._subscribed = (coordinator.price_entity, coordinator.sun_entity, entry.data[CONF_HOST])
+    coordinator._subscribed = (coordinator.watched_entities, entry.data[CONF_HOST])
 
     async def _changed(hass: HomeAssistant, changed: ConfigEntry) -> None:
         # A different sensor or dongle address needs fresh listeners and a new client, so reload; plain value changes just re-run the rule.
-        if (coordinator.price_entity, coordinator.sun_entity, changed.data[CONF_HOST]) != coordinator._subscribed:
+        if (coordinator.watched_entities, changed.data[CONF_HOST]) != coordinator._subscribed:
             hass.config_entries.async_schedule_reload(changed.entry_id)
         else:
             await coordinator.async_evaluate()

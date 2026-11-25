@@ -19,4 +19,4 @@ class Curtailed(SungrowEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"original_limit_kw": self.coordinator.original_kw}
+        return {"original_limit_kw": self.coordinator.original_kw, "armed": not self.coordinator.shadow}

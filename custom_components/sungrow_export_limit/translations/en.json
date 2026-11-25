@@ -3,25 +3,52 @@
     "step": {
       "user": {
         "title": "Sungrow inverter",
-        "description": "The dongle's Modbus port is encrypted by the inverter itself and needs no login. The rule runs as soon as this is saved. It only ever changes the inverter's feed-in limit while the trigger is hit, and puts back the value it found.",
+        "description": "Starts in shadow mode: nothing is written to the inverter until you turn that off. Whenever it does write, it first saves the limit it found and puts that value back afterwards.",
         "data": {
           "host": "Dongle IP address",
           "price_entity": "Feed-in price sensor",
-          "trigger_price": "Trigger price (limit export while the price is below)",
-          "max_export_kw": "Maximum export when triggered",
+          "grid_entity": "Grid power sensor",
+          "grid_export_negative": "Grid sensor reports export as negative",
+          "load_entity": "House load sensor (optional)",
+          "soc_entity": "Battery charge sensor (optional)",
+          "shadow_mode": "Shadow mode (report only)",
+          "enter_price": "Start limiting at or below this price",
+          "exit_price": "Stop limiting at or above this price",
+          "min_export_w": "Grid export needed to start",
+          "soc_high": "Battery full level",
+          "soc_export_w": "Grid export needed to start when the battery is full",
+          "hold_seconds": "Hold time before starting",
+          "min_limit_kw": "Minimum limit",
+          "deadband_w": "Ignore changes smaller than",
+          "max_hours": "Longest single episode",
+          "stale_seconds": "Distrust sensor readings older than",
           "sun_entity": "Sun entity",
           "min_sun_elevation": "Stop limiting below this sun elevation",
           "restore_after_minutes": "Put the original limit back after",
-          "min_interval_seconds": "Minimum time between limiting changes"
+          "min_interval_seconds": "Minimum time between lowering writes"
         },
         "data_description": {
-          "price_entity": "The sensor holding the price you are paid to export. A negative value means you pay to export.",
-          "trigger_price": "In the sensor's own unit. 0 limits export only while the price is negative.",
-          "max_export_kw": "The limit written while the trigger is hit. 0 stops export entirely. A limit already at or below this is left alone.",
+          "price_entity": "The price you are paid to export. A negative value means you pay to export.",
+          "grid_entity": "Site grid power from a meter, in W or kW. The inverter itself has no meter, so this must come from another device.",
+          "grid_export_negative": "On when exporting reads negative and importing positive (the usual meter convention). Turn off if it is the other way round.",
+          "load_entity": "Whole-house consumption. The limit is never set below it. Leave empty to floor the limit at the minimum limit below, and set that to your typical load.",
+          "soc_entity": "If set, a battery at or above the full level lets limiting start on a smaller export.",
+          "shadow_mode": "On, the rule evaluates everything and reports what it would do (Target export limit sensor and the episode event) but writes nothing. Turn off to let it write the limit.",
+          "enter_price": "In the price sensor's own unit.",
+          "exit_price": "Must be above the start price. The gap stops flapping on a noisy price.",
+          "min_export_w": "Limiting only starts while the site really exports at least this much.",
+          "soc_high": "At or above this charge, limiting starts on the smaller export below.",
+          "soc_export_w": "A full battery cannot absorb the surplus.",
+          "hold_seconds": "The price and export conditions must both hold this long.",
+          "min_limit_kw": "Never write a limit below this. Without a house load sensor it is the only floor.",
+          "deadband_w": "Saves needless writes to the inverter.",
+          "max_hours": "Limiting stops after this long, restores the original limit and waits for the conditions to clear before it can start again.",
+          "stale_seconds": "If the price, grid, load or battery reading is older than this, limiting ends and the original limit is put back.",
           "sun_entity": "Used for the end-of-light cutoff.",
           "min_sun_elevation": "Puts the original limit back before the light ends and the dongle powers off.",
-          "restore_after_minutes": "A limit this integration lowered is put back to the value it found, unless the rule renews it.",
-          "min_interval_seconds": "Stops the limit flapping on a noisy price."
+          "restore_after_minutes": "A limit this integration lowered lapses back by itself unless the rule keeps renewing it. This is the watchdog.",
+          "min_interval_seconds": "Raising the limit never waits.",
+          "host": "The dongle's Modbus port is encrypted by the inverter itself and needs no login."
         }
       },
       "reconfigure": {
@@ -32,7 +59,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Could not read the inverter through the dongle."
+      "cannot_connect": "Could not read the inverter through the dongle.",
+      "exit_price_not_above_enter_price": "The stop price must be above the start price."
     },
     "abort": {
       "already_configured": "This dongle is already set up.",
@@ -46,27 +74,54 @@
         "data": {
           "host": "Dongle IP address",
           "price_entity": "Feed-in price sensor",
-          "trigger_price": "Trigger price (limit export while the price is below)",
-          "max_export_kw": "Maximum export when triggered",
+          "grid_entity": "Grid power sensor",
+          "grid_export_negative": "Grid sensor reports export as negative",
+          "load_entity": "House load sensor (optional)",
+          "soc_entity": "Battery charge sensor (optional)",
+          "shadow_mode": "Shadow mode (report only)",
+          "enter_price": "Start limiting at or below this price",
+          "exit_price": "Stop limiting at or above this price",
+          "min_export_w": "Grid export needed to start",
+          "soc_high": "Battery full level",
+          "soc_export_w": "Grid export needed to start when the battery is full",
+          "hold_seconds": "Hold time before starting",
+          "min_limit_kw": "Minimum limit",
+          "deadband_w": "Ignore changes smaller than",
+          "max_hours": "Longest single episode",
+          "stale_seconds": "Distrust sensor readings older than",
           "sun_entity": "Sun entity",
           "min_sun_elevation": "Stop limiting below this sun elevation",
           "restore_after_minutes": "Put the original limit back after",
-          "min_interval_seconds": "Minimum time between limiting changes"
+          "min_interval_seconds": "Minimum time between lowering writes"
         },
         "data_description": {
-          "host": "Checked by reading the inverter before it is saved.",
-          "price_entity": "The sensor holding the price you are paid to export. A negative value means you pay to export.",
-          "trigger_price": "In the sensor's own unit. 0 limits export only while the price is negative.",
-          "max_export_kw": "The limit written while the trigger is hit. 0 stops export entirely. A limit already at or below this is left alone.",
+          "price_entity": "The price you are paid to export. A negative value means you pay to export.",
+          "grid_entity": "Site grid power from a meter, in W or kW. The inverter itself has no meter, so this must come from another device.",
+          "grid_export_negative": "On when exporting reads negative and importing positive (the usual meter convention). Turn off if it is the other way round.",
+          "load_entity": "Whole-house consumption. The limit is never set below it. Leave empty to floor the limit at the minimum limit below, and set that to your typical load.",
+          "soc_entity": "If set, a battery at or above the full level lets limiting start on a smaller export.",
+          "shadow_mode": "On, the rule evaluates everything and reports what it would do (Target export limit sensor and the episode event) but writes nothing. Turn off to let it write the limit.",
+          "enter_price": "In the price sensor's own unit.",
+          "exit_price": "Must be above the start price. The gap stops flapping on a noisy price.",
+          "min_export_w": "Limiting only starts while the site really exports at least this much.",
+          "soc_high": "At or above this charge, limiting starts on the smaller export below.",
+          "soc_export_w": "A full battery cannot absorb the surplus.",
+          "hold_seconds": "The price and export conditions must both hold this long.",
+          "min_limit_kw": "Never write a limit below this. Without a house load sensor it is the only floor.",
+          "deadband_w": "Saves needless writes to the inverter.",
+          "max_hours": "Limiting stops after this long, restores the original limit and waits for the conditions to clear before it can start again.",
+          "stale_seconds": "If the price, grid, load or battery reading is older than this, limiting ends and the original limit is put back.",
           "sun_entity": "Used for the end-of-light cutoff.",
           "min_sun_elevation": "Puts the original limit back before the light ends and the dongle powers off.",
-          "restore_after_minutes": "A limit this integration lowered is put back to the value it found, unless the rule renews it.",
-          "min_interval_seconds": "Stops the limit flapping on a noisy price."
+          "restore_after_minutes": "A limit this integration lowered lapses back by itself unless the rule keeps renewing it. This is the watchdog.",
+          "min_interval_seconds": "Raising the limit never waits.",
+          "host": "Checked by reading the inverter before it is saved."
         }
       }
     },
     "error": {
-      "cannot_connect": "Could not read the inverter through the dongle."
+      "cannot_connect": "Could not read the inverter through the dongle.",
+      "exit_price_not_above_enter_price": "The stop price must be above the start price."
     }
   }
 }

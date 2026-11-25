@@ -29,10 +29,25 @@ class FormsSerialise(unittest.TestCase):
             return voluptuous_serialize.convert(schema, custom_serializer=cv.custom_serializer)
 
     def test_options_form_with_saved_values(self):
-        fields = self._fields({"price_entity": "sensor.price", "trigger_price": 0.02, "max_export_kw": 1.5})
+        fields = self._fields({"price_entity": "sensor.price", "grid_entity": "sensor.grid", "enter_price": -0.01})
         names = {f["name"] for f in fields}
-        self.assertTrue({"price_entity", "trigger_price", "max_export_kw"} <= names)
+        self.assertTrue({"price_entity", "grid_entity", "load_entity", "soc_entity", "shadow_mode", "enter_price",
+                         "exit_price", "min_limit_kw", "max_hours"} <= names)
         self.assertNotIn("full_kw", names)
+        self.assertNotIn("trigger_price", names)
+
+    def test_setup_form_starts_in_shadow_mode(self):
+        shadow = next(f for f in self._fields({}) if f["name"] == "shadow_mode")
+        self.assertTrue(shadow["default"])
+
+    def test_rule_check_needs_exit_price_above_enter_price(self):
+        self.assertTrue(self.flow._check_rule({"enter_price": 0.0, "exit_price": 0.0}))
+        self.assertFalse(self.flow._check_rule({"enter_price": -0.005, "exit_price": 0.005}))
+
+    def test_cleared_optional_sensors_are_stored_as_none(self):
+        out = self.flow._with_cleared({"price_entity": "sensor.p"})
+        self.assertIsNone(out["load_entity"])
+        self.assertEqual(self.flow._with_cleared({"load_entity": "sensor.l"})["load_entity"], "sensor.l")
 
     def test_setup_form_with_nothing_saved(self):
         self.assertTrue(self._fields({}))
@@ -69,8 +84,8 @@ class OptionsFlowHost(unittest.TestCase):
     def _submit(self, new_host, probe_errors):
         from unittest import mock
         cf, flow, entry, asyncio = self._flow()
-        values = {"host": new_host, "price_entity": "sensor.price", "trigger_price": 0.0, "max_export_kw": 0.0,
-                  "sun_entity": "sun.sun", "min_sun_elevation": 12, "restore_after_minutes": 15,
+        values = {"host": new_host, "price_entity": "sensor.price", "grid_entity": "sensor.grid",
+                  "enter_price": -0.005, "exit_price": 0.005, "sun_entity": "sun.sun", "min_sun_elevation": 12, "restore_after_minutes": 15,
                   "min_interval_seconds": 120}
 
         async def probe(*_a):
