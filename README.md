@@ -19,9 +19,14 @@ the inverter, so a plain Modbus client gets nothing back. This integration speak
 
 ## Install
 
-HACS: add this repository as a custom repository (category Integration), install it, and restart
-Home Assistant. Or copy `custom_components/sungrow_export_limit` into your `config/custom_components`
-folder and restart.
+**HACS (recommended):** open HACS, search for "Sungrow export limit", download it, and restart Home
+Assistant.
+
+**HACS custom repository (fallback):** if the search doesn't find it, add this repository as a custom
+repository (category Integration), then download it and restart Home Assistant.
+
+**Manual:** copy `custom_components/sungrow_export_limit` into your `config/custom_components` folder
+and restart.
 
 Then go to Settings, Devices & services, Add integration, and search for "Sungrow export limit".
 
